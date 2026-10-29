@@ -42,10 +42,7 @@ Signed-off-by: Aleksei Sviridkin <f@lex.la>
 ---
 --- a/arch/arm/mach-mediatek/Kconfig
 +++ b/arch/arm/mach-mediatek/Kconfig
-@@ -173,6 +173,23 @@ config MTK_MEM_MAP_MMIO_SIZE
- 	help
- 		Target-specific MMIO region size in mem_map.
- 
+@@ -124,3 +124,20 @@
 +config MTK_KERNEL_IMAGE_HEADER
 +	bool "Prepend an arm64 Linux kernel image header"
 +	select LINUX_KERNEL_IMAGE_HEADER
@@ -63,6 +60,6 @@ Signed-off-by: Aleksei Sviridkin <f@lex.la>
 +	  Set it so that the difference is the text offset the vendor
 +	  bootloader expects; the default gives a zero offset.
 +
- endif
- 
  config SYS_BOARD
+ 	string "Board name"
+ 	default "mt7622" if TARGET_MT7622

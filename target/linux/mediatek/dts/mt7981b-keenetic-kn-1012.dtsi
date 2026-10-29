@@ -4,8 +4,6 @@
 
 #include "mt7981b.dtsi"
 
-#include <dt-bindings/phy/phy.h>
-
 / {
 	memory@40000000 {
 		device_type = "memory";
@@ -219,7 +217,7 @@
 	phy13: ethernet-phy@d {
 		compatible = "ethernet-phy-id03a2.a411";
 		reg = <0xd>;
-		rx-polarity = <PHY_POL_INVERT>;
+		airoha,pnswap-rx;
 		interrupt-parent = <&pio>;
 		interrupts = <0 IRQ_TYPE_EDGE_FALLING>;
 		reset-gpios = <&pio 3 GPIO_ACTIVE_LOW>;
