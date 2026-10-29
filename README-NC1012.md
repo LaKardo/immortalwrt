@@ -9,6 +9,15 @@ Use **Actions → Build Netcraze NC-1012 → Run workflow**, or push a tag match
 `v25.12.2-nc1012.*`. A tag creates a GitHub Release containing the images and
 configuration used for the build.
 
+Tag pushes dispatch the build on `nc1012-25.12`, checking out the exact tag.
+This shares the branch-scoped GitHub Actions cache between releases. The fork's
+default branch is `nc1012-25.12` so manual dispatch is also available.
+Downloads and ccache are restored independently and saved even after a build
+failure. Each run uses a new cache key, with fallback to the preceding compatible
+cache; compiler identity is checked by content rather than timestamps. Compiler
+cache statistics appear in the job summary. The first run is a cold build;
+later runs still configure and link packages and rebuild uncached work.
+
 The target produces `squashfs-factory.bin`, `squashfs-sysupgrade.bin`, and the
 initramfs kernel image. The normal package feeds remain those of ImmortalWrt
 25.12.2; kernel modules must match the resulting kernel ABI.
