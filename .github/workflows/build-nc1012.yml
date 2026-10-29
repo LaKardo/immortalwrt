@@ -1,0 +1,105 @@
+name: Build Netcraze NC-1012
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v25.12.2-nc1012.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nc1012-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib gettext \
+            git libncurses-dev libssl-dev python3-distutils python3-setuptools \
+            rsync swig unzip zlib1g-dev file wget time
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            dl
+            .ccache
+            staging_dir/host
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/toolchain-*
+          key: nc1012-${{ runner.os }}-${{ hashFiles('feeds.conf.default', 'target/linux/**', 'toolchain/**', 'package/boot/uboot-mediatek/**') }}
+          restore-keys: |
+            nc1012-${{ runner.os }}-
+
+      - name: Configure feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure target
+        run: |
+          cp configs/nc-1012.seed .config
+          echo 'CONFIG_CCACHE=y' >> .config
+          make defconfig
+          grep -E 'TARGET_(mediatek|ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
+
+      - name: Download sources
+        run: make download -j"$(nproc)" V=s
+
+      - name: Build firmware
+        run: make -j"$(nproc)" V=s
+
+      - name: Verify output
+        run: |
+          set -eux
+          ls -lh bin/targets/mediatek/filogic/*nc-1012* \
+            bin/targets/mediatek/filogic/sha256sums
+          grep -q 'netcraze_nc-1012' bin/targets/mediatek/filogic/sha256sums
+          test -f bin/targets/mediatek/filogic/*netcraze_nc-1012*squashfs-factory.bin
+          test -f bin/targets/mediatek/filogic/*netcraze_nc-1012*squashfs-sysupgrade.bin
+
+      - name: Collect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-25.12.2-netcraze-nc-1012
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            bin/targets/mediatek/filogic/*nc-1012*
+            build-config.txt
+            .config
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            bin/targets/mediatek/filogic/*nc-1012*
+            build-config.txt
+            .config
