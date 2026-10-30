@@ -16,8 +16,8 @@ permissions:
   actions: write
 
 concurrency:
-  group: netcraze-${{ github.ref }}
-  cancel-in-progress: true
+  group: netcraze-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}
 
 jobs:
   dispatch:
@@ -82,9 +82,18 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: dl
-          key: netcraze-dl-v3-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: netcraze-dl-v3-${{ runner.os }}-${{ hashFiles('feeds.conf.default', 'include/kernel-*', 'package/**/Makefile', 'target/linux/**/Makefile', 'tools/**/Makefile', 'toolchain/**/Makefile') }}
           restore-keys: |
             netcraze-dl-v3-${{ runner.os }}-
+
+      - name: Restore host tools and toolchain
+        id: toolchain
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/toolchain-*
+          key: netcraze-toolchain-v1-${{ runner.os }}-${{ hashFiles('configs/netcraze.seed', 'Makefile', 'rules.mk', 'include/**', 'tools/**', 'toolchain/**', 'target/linux/mediatek/Makefile', 'target/linux/mediatek/filogic/target.mk') }}
 
       - name: Restore compiler cache
         id: ccache
@@ -113,6 +122,16 @@ jobs:
           mkdir -p "$CCACHE_DIR"
           grep -E 'TARGET_(mediatek|ROOTFS|MULTI_PROFILE|PER_DEVICE_ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
 
+      # Checkout gives sources newer mtimes than restored stamps; refresh them so
+      # OpenWrt reuses the toolchain whose sources are pinned by the cache key.
+      - name: Mark restored toolchain as current
+        if: steps.toolchain.outputs.cache-hit == 'true'
+        run: |
+          set -eux
+          compgen -G 'staging_dir/host/stamp/.tools_compile_*'
+          compgen -G 'staging_dir/toolchain-*/stamp/.toolchain_compile'
+          find staging_dir/host/stamp staging_dir/toolchain-*/stamp -type f -exec touch {} +
+
       - name: Validate local patches
         run: |
           set -eux
@@ -122,9 +141,11 @@ jobs:
           make package/network/services/hostapd/prepare V=s
 
       - name: Download sources
+        id: download_sources
         run: make download -j"$(nproc)" V=s
 
       - name: Build firmware
+        id: build_firmware
         run: make -j"$(nproc)" V=s
 
       - name: Compiler cache statistics
@@ -135,19 +156,61 @@ jobs:
             cat ccache-stats.txt >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Save compiler cache even after failure
-        if: always() && steps.ccache.outcome == 'success'
+      - name: Save compiler cache even after build failure
+        id: save_ccache
+        if: always() && steps.ccache.outcome == 'success' && (steps.build_firmware.outcome == 'success' || steps.build_firmware.outcome == 'failure')
         uses: actions/cache/save@v4
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
 
-      - name: Save downloads even after failure
-        if: always() && steps.downloads.outcome == 'success'
+      - name: Check toolchain cache contents
+        id: toolchain_ready
+        if: always() && steps.toolchain.outcome == 'success' && steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          if compgen -G 'staging_dir/host/stamp/.tools_compile_*' >/dev/null &&
+             compgen -G 'staging_dir/toolchain-*/stamp/.toolchain_compile' >/dev/null; then
+            echo ready=true >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save host tools and toolchain
+        id: save_toolchain
+        if: always() && steps.toolchain_ready.outputs.ready == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/toolchain-*
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+
+      - name: Save downloads
+        id: save_downloads
+        if: always() && steps.downloads.outcome == 'success' && steps.downloads.outputs.cache-hit != 'true' && steps.download_sources.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: dl
           key: ${{ steps.downloads.outputs.cache-primary-key }}
+
+      - name: Remove superseded caches
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CCACHE_KEY: ${{ steps.save_ccache.outcome == 'success' && steps.ccache.outputs.cache-primary-key || '' }}
+          TOOLCHAIN_KEY: ${{ steps.save_toolchain.outcome == 'success' && steps.toolchain.outputs.cache-primary-key || '' }}
+          DL_KEY: ${{ steps.save_downloads.outcome == 'success' && steps.downloads.outputs.cache-primary-key || '' }}
+        run: |
+          prune() {
+            local prefix=$1 keep=$2
+            [[ -n "$keep" ]] || return 0
+            gh cache list --repo "$REPO" --key "$prefix" --limit 100 --json id,key \
+              --jq ".[] | select(.key != \"$keep\") | .id" |
+              while read -r id; do gh cache delete "$id" --repo "$REPO"; done
+          }
+          prune netcraze-ccache-v3- "$CCACHE_KEY"
+          prune netcraze-toolchain-v1- "$TOOLCHAIN_KEY"
+          prune netcraze-dl-v3- "$DL_KEY"
 
       - name: Verify output
         run: |
