@@ -1,22 +1,22 @@
-name: Build Netcraze NC-1012
+name: Build Netcraze NC-1012 and NC-1812
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Existing v25.12.2-nc1012.* tag to build and publish (empty = branch build)'
+        description: 'Existing v25.12.2-netcraze.* tag to build and publish (empty = branch build)'
         type: string
         default: ''
   push:
     tags:
-      - 'v25.12.2-nc1012.*'
+      - 'v25.12.2-netcraze.*'
 
 permissions:
   contents: write
   actions: write
 
 concurrency:
-  group: nc1012-${{ github.ref }}
+  group: netcraze-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -65,7 +65,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           if [[ -n "$RELEASE_TAG" ]]; then
-            [[ "$RELEASE_TAG" =~ ^v25\.12\.2-nc1012\.[0-9]+$ ]]
+            [[ "$RELEASE_TAG" =~ ^v25\.12\.2-netcraze\.[0-9]+$ ]]
             test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
           fi
 
@@ -82,27 +82,35 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: dl
-          key: nc1012-dl-v2-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: netcraze-dl-v3-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            nc1012-dl-v2-${{ runner.os }}-
+            netcraze-dl-v3-${{ runner.os }}-
 
       - name: Restore compiler cache
         id: ccache
         uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: nc1012-ccache-v2-${{ runner.os }}-${{ hashFiles('toolchain/**', 'tools/ccache/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: netcraze-ccache-v3-${{ runner.os }}-${{ hashFiles('toolchain/**', 'tools/ccache/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            nc1012-ccache-v2-${{ runner.os }}-${{ hashFiles('toolchain/**', 'tools/ccache/**') }}-
+            netcraze-ccache-v3-${{ runner.os }}-${{ hashFiles('toolchain/**', 'tools/ccache/**') }}-
 
       - name: Configure feeds
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Validate local patches
+        run: |
+          set -eux
+          test -s package/kernel/mac80211/patches/subsys/400-wifi-mac80211-defer-ap-side-ft-key-upload.patch
+          test -s package/network/services/hostapd/patches/022-hostapd-ft-readd-unassociated-sta-before-ptk.patch
+          make package/kernel/mac80211/prepare V=s
+          make package/network/services/hostapd/prepare V=s
+
       - name: Configure target
         run: |
-          cp configs/nc-1012.seed .config
+          cp configs/netcraze.seed .config
           make defconfig
           grep -qx 'CONFIG_CCACHE=y' .config
           mkdir -p "$CCACHE_DIR"
@@ -140,19 +148,24 @@ jobs:
         run: |
           set -eux
           ls -lh bin/targets/mediatek/filogic/*nc-1012* \
+            bin/targets/mediatek/filogic/*nc-1812* \
             bin/targets/mediatek/filogic/sha256sums
           grep -q 'netcraze_nc-1012' bin/targets/mediatek/filogic/sha256sums
+          grep -q 'netcraze_nc-1812' bin/targets/mediatek/filogic/sha256sums
           compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1012*squashfs-factory.bin'
           compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1012*squashfs-sysupgrade.bin'
+          compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1812*squashfs-factory.bin'
+          compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1812*squashfs-sysupgrade.bin'
 
       - name: Collect artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: immortalwrt-25.12.2-netcraze-nc-1012
+          name: immortalwrt-25.12.2-netcraze-nc-1012-nc-1812
           if-no-files-found: error
           retention-days: 90
           path: |
             bin/targets/mediatek/filogic/*nc-1012*
+            bin/targets/mediatek/filogic/*nc-1812*
             build-config.txt
             bin/targets/mediatek/filogic/*.buildinfo
             bin/targets/mediatek/filogic/sha256sums
@@ -165,6 +178,7 @@ jobs:
           generate_release_notes: true
           files: |
             bin/targets/mediatek/filogic/*nc-1012*
+            bin/targets/mediatek/filogic/*nc-1812*
             build-config.txt
             bin/targets/mediatek/filogic/*.buildinfo
             bin/targets/mediatek/filogic/sha256sums
