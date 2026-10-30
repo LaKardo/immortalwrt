@@ -105,8 +105,13 @@ jobs:
           cp configs/netcraze.seed .config
           make defconfig
           grep -qx 'CONFIG_CCACHE=y' .config
+          grep -qx 'CONFIG_TARGET_MULTI_PROFILE=y' .config
+          grep -qx 'CONFIG_TARGET_PER_DEVICE_ROOTFS=y' .config
+          for device in nc-1012 nc-1812; do
+            grep -qx "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcraze_${device}=y" .config
+          done
           mkdir -p "$CCACHE_DIR"
-          grep -E 'TARGET_(mediatek|ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
+          grep -E 'TARGET_(mediatek|ROOTFS|MULTI_PROFILE|PER_DEVICE_ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
 
       - name: Validate local patches
         run: |
