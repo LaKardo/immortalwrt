@@ -100,14 +100,6 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Validate local patches
-        run: |
-          set -eux
-          test -s package/kernel/mac80211/patches/subsys/400-wifi-mac80211-defer-ap-side-ft-key-upload.patch
-          test -s package/network/services/hostapd/patches/022-hostapd-ft-readd-unassociated-sta-before-ptk.patch
-          make package/kernel/mac80211/prepare V=s
-          make package/network/services/hostapd/prepare V=s
-
       - name: Configure target
         run: |
           cp configs/netcraze.seed .config
@@ -115,6 +107,14 @@ jobs:
           grep -qx 'CONFIG_CCACHE=y' .config
           mkdir -p "$CCACHE_DIR"
           grep -E 'TARGET_(mediatek|ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
+
+      - name: Validate local patches
+        run: |
+          set -eux
+          test -s package/kernel/mac80211/patches/subsys/400-wifi-mac80211-defer-ap-side-ft-key-upload.patch
+          test -s package/network/services/hostapd/patches/022-hostapd-ft-readd-unassociated-sta-before-ptk.patch
+          make package/kernel/mac80211/prepare V=s
+          make package/network/services/hostapd/prepare V=s
 
       - name: Download sources
         run: make download -j"$(nproc)" V=s
