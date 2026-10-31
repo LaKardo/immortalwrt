@@ -22,9 +22,20 @@ Caches:
 
 - `dl`: source downloads, keyed by the package, tool and feed definitions.
 - host tools and toolchain: `staging_dir/host` and `staging_dir/toolchain-*`,
-  keyed by the seed, build system, tools and toolchain sources. A matching
-  cache skips the tools and toolchain build entirely.
+  keyed by the build system, tools and toolchain sources and by
+  `toolchain-config.txt`. A matching cache skips the tools and toolchain build
+  entirely.
 - ccache: compiler output, checked by compiler content rather than timestamps.
+
+`toolchain-config.txt` is the resolved `.config` after `make defconfig` without
+the package selection (`CONFIG_PACKAGE_*`, `CONFIG_MODULE_*`,
+`CONFIG_TARGET_DEVICE_PACKAGES_*`, `CONFIG_DEFAULT_*`). Adding or removing
+packages in the seed therefore keeps the cached toolchain, while any other
+option (GCC version, libc, optimisation, target, `CONFIG_USE_*`) changes the key
+and rebuilds it. The restored stamps are refreshed, so OpenWrt itself does not
+detect a stale toolchain: the key is the only guard. If the toolchain must be
+rebuilt for a reason the key does not cover, bump `netcraze-toolchain-v1` in the
+workflow. The file is part of the build artifacts.
 
 Caches are saved only after the corresponding step did real work, so an early
 failure cannot replace a populated cache with an empty one. Superseded caches
@@ -39,6 +50,34 @@ Each device produces `squashfs-factory.bin`, `squashfs-sysupgrade.bin`, and
 the initramfs kernel image. Only flash the images whose name matches the
 device. The normal package feeds remain those of ImmortalWrt 25.12.2; kernel
 modules must match the resulting kernel ABI.
+
+## Built-in kernel modules
+
+The kernel hash of this build differs from the official ImmortalWrt 25.12.2
+release, so `kmod-*` packages from the official feeds cannot be installed on
+it. Kernel modules needed later must be added to `configs/netcraze.seed`. Both
+images include:
+
+- `kmod-amneziawg` (AmneziaWG 3.1.20260906 from the `awg` feed,
+  [awg-openwrt](https://github.com/Slava-Shchipunov/awg-openwrt) pinned to the
+  same commit as [Truba](https://github.com/LaKardo/truba)), with its
+  dependencies `kmod-udptunnel4`, `kmod-udptunnel6`,
+  `kmod-crypto-lib-chacha20poly1305` and `kmod-crypto-lib-curve25519`;
+- `kmod-nft-socket`, required by `truba`.
+
+The workflow checks that these modules and packages are present in both
+sysupgrade images and records the kernel version of each image in
+`kernel-versions.txt`.
+
+Truba and its user-space packages do not depend on the kernel hash and are
+installed from the Truba feed after flashing:
+
+```sh
+wget -O /etc/apk/keys/truba.pem https://lakardo.github.io/truba/keys/truba.pem
+. /etc/os-release; echo "https://lakardo.github.io/truba/${VERSION}/mediatek/filogic/packages.adb" > /etc/apk/repositories.d/truba.list
+apk update && apk add amneziawg-tools luci-proto-amneziawg truba luci-app-truba luci-i18n-truba-ru luci-app-upnp
+/etc/init.d/network restart
+```
 
 ## First installation (NC-1012)
 

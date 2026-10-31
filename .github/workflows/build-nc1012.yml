@@ -86,15 +86,6 @@ jobs:
           restore-keys: |
             netcraze-dl-v3-${{ runner.os }}-
 
-      - name: Restore host tools and toolchain
-        id: toolchain
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            staging_dir/host
-            staging_dir/toolchain-*
-          key: netcraze-toolchain-v1-${{ runner.os }}-${{ hashFiles('configs/netcraze.seed', 'Makefile', 'rules.mk', 'include/**', 'tools/**', 'toolchain/**', 'target/linux/mediatek/Makefile', 'target/linux/mediatek/filogic/target.mk') }}
-
       - name: Restore compiler cache
         id: ccache
         uses: actions/cache/restore@v4
@@ -118,9 +109,29 @@ jobs:
           grep -qx 'CONFIG_TARGET_PER_DEVICE_ROOTFS=y' .config
           for device in nc-1012 nc-1812; do
             grep -qx "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcraze_${device}=y" .config
+            grep -qx "CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_netcraze_${device}=\"kmod-amneziawg kmod-nft-socket\"" .config
+          done
+          for pkg in kmod-amneziawg kmod-nft-socket; do
+            grep -qx "CONFIG_PACKAGE_${pkg}=y" .config
           done
           mkdir -p "$CCACHE_DIR"
-          grep -E 'TARGET_(mediatek|ROOTFS|MULTI_PROFILE|PER_DEVICE_ROOTFS)|DEVICE_netcraze|CCACHE' .config | tee build-config.txt
+          grep -E 'TARGET_(mediatek|ROOTFS|MULTI_PROFILE|PER_DEVICE_ROOTFS)|DEVICE_netcraze|CCACHE|PACKAGE_kmod-(amneziawg|nft-socket)' .config | tee build-config.txt
+          # Toolchain cache key input: the resolved config without package
+          # selection, so adding packages keeps the toolchain while any other
+          # option (GCC, libc, optimisation, target) still invalidates it.
+          grep -E '^CONFIG_' .config \
+            | grep -vE '^CONFIG_(PACKAGE_|MODULE_|TARGET_DEVICE_PACKAGES_|DEFAULT_)' \
+            | LC_ALL=C sort > toolchain-config.txt
+          wc -l toolchain-config.txt
+
+      - name: Restore host tools and toolchain
+        id: toolchain
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/toolchain-*
+          key: netcraze-toolchain-v1-${{ runner.os }}-${{ hashFiles('toolchain-config.txt', 'Makefile', 'rules.mk', 'include/**', 'tools/**', 'toolchain/**', 'target/linux/mediatek/Makefile', 'target/linux/mediatek/filogic/target.mk') }}
 
       # Checkout gives sources newer mtimes than restored stamps; refresh them so
       # OpenWrt reuses the toolchain whose sources are pinned by the cache key.
@@ -225,6 +236,29 @@ jobs:
           compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1812*squashfs-factory.bin'
           compgen -G 'bin/targets/mediatek/filogic/*netcraze_nc-1812*squashfs-sysupgrade.bin'
 
+      - name: Verify kernel modules in images
+        run: |
+          set -euo pipefail
+          for device in nc-1012 nc-1812; do
+            img=$(compgen -G "bin/targets/mediatek/filogic/*netcraze_${device}-squashfs-sysupgrade.bin")
+            work=$(mktemp -d)
+            tar -xf "$img" -C "$work"
+            staging_dir/host/bin/unsquashfs4 -no-progress -d "$work/rootfs" \
+              "$work/sysupgrade-netcraze_${device}/root" \
+              lib/modules lib/apk/db/installed >/dev/null
+            for mod in amneziawg nft_socket udp_tunnel ip6_udp_tunnel; do
+              [ -n "$(find "$work/rootfs/lib/modules" -name "${mod}.ko")" ] ||
+                { echo "::error::${device}: ${mod}.ko missing"; exit 1; }
+            done
+            for pkg in kmod-amneziawg kmod-nft-socket; do
+              grep -qx "P:${pkg}" "$work/rootfs/lib/apk/db/installed" ||
+                { echo "::error::${device}: package ${pkg} not installed"; exit 1; }
+            done
+            echo "${device}: $(grep -A1 -x 'P:kernel' "$work/rootfs/lib/apk/db/installed" | sed -n 's/^V://p')" |
+              tee -a kernel-versions.txt
+            rm -rf "$work"
+          done
+
       - name: Collect artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -235,6 +269,8 @@ jobs:
             bin/targets/mediatek/filogic/*nc-1012*
             bin/targets/mediatek/filogic/*nc-1812*
             build-config.txt
+            toolchain-config.txt
+            kernel-versions.txt
             bin/targets/mediatek/filogic/*.buildinfo
             bin/targets/mediatek/filogic/sha256sums
 
@@ -248,5 +284,6 @@ jobs:
             bin/targets/mediatek/filogic/*nc-1012*
             bin/targets/mediatek/filogic/*nc-1812*
             build-config.txt
+            kernel-versions.txt
             bin/targets/mediatek/filogic/*.buildinfo
             bin/targets/mediatek/filogic/sha256sums
